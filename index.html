@@ -8,13 +8,13 @@
     <!-- iOS Web App 設定 -->
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="極光行旅">
+    <meta name="apple-mobile-web-app-title" content="旅行計畫">
     <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/3063/3063205.png">
 
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     
-    <!-- 設定 Tailwind 安全區域 & 自定義動畫 -->
+    <!-- 設定 Tailwind -->
     <script>
       tailwind.config = {
         theme: {
@@ -69,7 +69,6 @@
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
         body { -webkit-tap-highlight-color: transparent; }
-        /* 避免 iOS 輸入框放大 */
         input, select, textarea { font-size: 16px !important; }
     </style>
 </head>
@@ -83,10 +82,15 @@
         import { 
           Calendar, MapPin, DollarSign, CloudSun, CloudSnow, Sun, 
           Clock, Plus, Trash2, Hotel, Car, Navigation, CloudRain,
-          Edit2, X, Save, MoreVertical, ChevronRight, Calculator
+          Edit2, X, Save, MoreVertical, ChevronRight, Calculator, Settings
         } from 'lucide-react';
 
-        // --- 初始資料 (基於您的 CSV) ---
+        // --- 初始資料 ---
+        const INITIAL_TRIP_INFO = {
+            title: 'AURORA 2026',
+            subtitle: 'ALASKA TRIP PLANNER'
+        };
+
         const INITIAL_ITINERARY = [
           {
             id: 1,
@@ -147,6 +151,9 @@
           const bottomRef = useRef(null);
           
           // --- State: 資料 ---
+          const [tripInfo, setTripInfo] = useState(() => {
+            try { return JSON.parse(localStorage.getItem('aurora_trip_info')) || INITIAL_TRIP_INFO; } catch { return INITIAL_TRIP_INFO; }
+          });
           const [itinerary, setItinerary] = useState(() => {
             try { return JSON.parse(localStorage.getItem('aurora_itinerary')) || INITIAL_ITINERARY; } catch { return INITIAL_ITINERARY; }
           });
@@ -155,12 +162,14 @@
           });
 
           // --- State: 編輯 ---
-          const [editingDay, setEditingDay] = useState(null); // 正在編輯哪一天的 ID
-          const [editingActivity, setEditingActivity] = useState(null); // { dayId, activity }
+          const [isEditingTripInfo, setIsEditingTripInfo] = useState(false);
+          const [editingDay, setEditingDay] = useState(null);
+          const [editingActivity, setEditingActivity] = useState(null);
           const [isAddingActivity, setIsAddingActivity] = useState(false);
           const [showAddExpense, setShowAddExpense] = useState(false);
           
           // Form Data
+          const [tripInfoForm, setTripInfoForm] = useState(INITIAL_TRIP_INFO);
           const [dayForm, setDayForm] = useState({});
           const [activityForm, setActivityForm] = useState({});
           const [expenseForm, setExpenseForm] = useState({ item: '', amount: '', category: '餐飲', currency: 'USD' });
@@ -168,15 +177,26 @@
           const [exchangeRate, setExchangeRate] = useState(32.5);
 
           // --- Persistence ---
+          useEffect(() => { localStorage.setItem('aurora_trip_info', JSON.stringify(tripInfo)); }, [tripInfo]);
           useEffect(() => { localStorage.setItem('aurora_itinerary', JSON.stringify(itinerary)); }, [itinerary]);
           useEffect(() => { localStorage.setItem('aurora_expenses', JSON.stringify(expenses)); }, [expenses]);
 
-          // --- Weather Logic (Simulation) ---
+          // --- Title Logic ---
+          const handleOpenTripEdit = () => {
+             setTripInfoForm(tripInfo);
+             setIsEditingTripInfo(true);
+          }
+          const handleSaveTripInfo = () => {
+             setTripInfo(tripInfoForm);
+             setIsEditingTripInfo(false);
+          }
+
+          // --- Weather Logic ---
           const fetchWeather = () => {
             setItinerary(prev => prev.map(day => {
               const types = ['snow', 'clear', 'cloudy', 'snow', 'clear'];
               const type = types[Math.floor(Math.random() * types.length)];
-              const temp = Math.floor(Math.random() * 15) - 20; // -20 to -5
+              const temp = Math.floor(Math.random() * 15) - 20; 
               return { ...day, weather: { type, temp } };
             }));
             alert("已更新當日天氣預報 (模擬數據)");
@@ -188,12 +208,10 @@
             
             if (itinerary.length > 0) {
               const lastDay = itinerary[itinerary.length - 1];
-              // 處理日期字串 YYYY-MM-DD
-              const parts = lastDay.date.split(/[-/]/); // 支援 - 或 /
+              const parts = lastDay.date.split(/[-/]/); 
               const y = parseInt(parts[0]);
-              const m = parseInt(parts[1]) - 1; // JS Month 0-11
+              const m = parseInt(parts[1]) - 1; 
               const d = parseInt(parts[2]);
-              
               newDateObj = new Date(y, m, d);
               newDateObj.setDate(newDateObj.getDate() + 1);
             }
@@ -217,7 +235,6 @@
             };
 
             setItinerary([...itinerary, newDay]);
-            // Scroll to bottom
             setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
           };
 
@@ -254,14 +271,12 @@
             const { dayId } = editingActivity;
             setItinerary(prev => prev.map(d => {
               if (d.id !== dayId) return d;
-              
               let newActivities;
               if (isAddingActivity) {
                 newActivities = [...d.activities, activityForm];
               } else {
                 newActivities = d.activities.map(a => a.id === activityForm.id ? activityForm : a);
               }
-              // 自動排序
               newActivities.sort((a, b) => a.time.localeCompare(b.time));
               return { ...d, activities: newActivities };
             }));
@@ -291,7 +306,7 @@
             if (confirm('刪除此筆費用？')) setExpenses(prev => prev.filter(e => e.id !== id));
           };
 
-          // --- UI Helpers ---
+          // --- RENDER ---
           const WeatherIcon = ({ type }) => {
             switch(type) {
               case 'snow': return <CloudSnow className="w-6 h-6 text-sky-300" />;
@@ -305,16 +320,17 @@
           const totalUSD = expenses.filter(e => e.currency === 'USD').reduce((acc, cur) => acc + cur.amount, 0);
           const totalTWD = totalUSD * exchangeRate;
 
-          // --- RENDER ---
           return (
             <div className="max-w-md mx-auto bg-slate-50 h-full flex flex-col font-sans relative shadow-2xl overflow-hidden">
               
               {/* Top Navigation */}
               <div className="bg-white px-5 py-4 shrink-0 border-b border-gray-100 flex flex-col justify-end pt-safe-top z-20 shadow-sm">
                 <div className="flex justify-between items-center">
-                  <div>
-                    <h1 className="text-xl font-black text-slate-800 tracking-tight">AURORA 2026</h1>
-                    <p className="text-xs text-slate-400 font-medium tracking-wide">ALASKA TRIP PLANNER</p>
+                  <div onClick={handleOpenTripEdit} className="cursor-pointer group select-none">
+                    <h1 className="text-xl font-black text-slate-800 tracking-tight flex items-center gap-2">
+                      {tripInfo.title} <Edit2 className="w-3.5 h-3.5 text-slate-300 opacity-50 group-hover:opacity-100 transition" />
+                    </h1>
+                    <p className="text-xs text-slate-400 font-medium tracking-wide group-hover:text-aurora-500 transition">{tripInfo.subtitle}</p>
                   </div>
                   {activeTab === 'itinerary' && (
                     <button onClick={fetchWeather} className="bg-sky-50 text-sky-600 p-2 rounded-full hover:bg-sky-100 active:scale-90 transition">
@@ -497,6 +513,21 @@
 
               {/* === MODALS === */}
               
+              {/* Trip Info Edit Modal */}
+              <Modal isOpen={isEditingTripInfo} onClose={() => setIsEditingTripInfo(false)} title="旅程名稱設定">
+                 <div className="space-y-4">
+                    <div>
+                        <label className="block text-xs font-bold text-slate-400 mb-1 uppercase tracking-wider">主標題</label>
+                        <input type="text" className="w-full border border-slate-200 rounded-xl p-3 bg-slate-50 font-black text-lg focus:outline-none focus:ring-2 focus:ring-aurora-500" value={tripInfoForm.title} onChange={e => setTripInfoForm({...tripInfoForm, title: e.target.value})} />
+                    </div>
+                    <div>
+                        <label className="block text-xs font-bold text-slate-400 mb-1 uppercase tracking-wider">副標題 / 地點</label>
+                        <input type="text" className="w-full border border-slate-200 rounded-xl p-3 bg-slate-50 text-sm focus:outline-none focus:ring-2 focus:ring-aurora-500" value={tripInfoForm.subtitle} onChange={e => setTripInfoForm({...tripInfoForm, subtitle: e.target.value})} />
+                    </div>
+                    <button onClick={handleSaveTripInfo} className="w-full bg-aurora-600 text-white py-3 rounded-xl font-bold mt-2 shadow-lg hover:bg-aurora-700 active:scale-95 transition">儲存設定</button>
+                 </div>
+              </Modal>
+
               {/* Day Edit Modal */}
               <Modal isOpen={!!editingDay} onClose={() => setEditingDay(null)} title="編輯當日資訊">
                 <div className="space-y-4">
