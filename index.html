@@ -1,0 +1,612 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>極光行旅 Aurora Planner</title>
+    
+    <!-- iOS Web App 設定 -->
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="極光行旅">
+    <link rel="apple-touch-icon" href="https://cdn-icons-png.flaticon.com/512/3063/3063205.png">
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- 設定 Tailwind 安全區域 & 自定義動畫 -->
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            padding: {
+              'safe-top': 'env(safe-area-inset-top)',
+              'safe-bottom': 'env(safe-area-inset-bottom)',
+            },
+            colors: {
+              aurora: {
+                50: '#f0fdfa',
+                100: '#ccfbf1',
+                500: '#14b8a6',
+                600: '#0d9488',
+                900: '#134e4a',
+              }
+            },
+            animation: {
+              'fade-in': 'fadeIn 0.2s ease-out',
+              'slide-up': 'slideUp 0.3s ease-out',
+            },
+            keyframes: {
+              fadeIn: {
+                '0%': { opacity: '0' },
+                '100%': { opacity: '1' },
+              },
+              slideUp: {
+                '0%': { transform: 'translateY(100%)' },
+                '100%': { transform: 'translateY(0)' },
+              }
+            }
+          }
+        }
+      }
+    </script>
+
+    <!-- Import Map -->
+    <script type="importmap">
+    {
+      "imports": {
+        "react": "https://esm.sh/react@18.2.0",
+        "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+        "lucide-react": "https://esm.sh/lucide-react@0.263.1"
+      }
+    }
+    </script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <style>
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        body { -webkit-tap-highlight-color: transparent; }
+        /* 避免 iOS 輸入框放大 */
+        input, select, textarea { font-size: 16px !important; }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 h-[100dvh] w-screen overflow-hidden selection:bg-aurora-100">
+    <div id="root" class="h-full w-full"></div>
+
+    <!-- 主程式邏輯 -->
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useRef } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { 
+          Calendar, MapPin, DollarSign, CloudSun, CloudSnow, Sun, 
+          Clock, Plus, Trash2, Hotel, Car, Navigation, CloudRain,
+          Edit2, X, Save, MoreVertical, ChevronRight, Calculator
+        } from 'lucide-react';
+
+        // --- 初始資料 (基於您的 CSV) ---
+        const INITIAL_ITINERARY = [
+          {
+            id: 1,
+            date: '2026-03-27',
+            dayOfWeek: '五',
+            location: 'Fairbanks',
+            accommodation: 'Minnie Street B&B',
+            transport: '租車 (Hertz)',
+            weather: null,
+            activities: [
+              { id: 'a1', time: '14:00', title: '抵達 Fairbanks 機場', note: '取車', type: 'transport' },
+              { id: 'a2', time: '16:00', title: 'Pioneer Park', note: '只有夏天有開, 但可拍照', type: 'sightseeing' },
+              { id: 'a3', time: '18:00', title: '晚餐', note: '泰式料理', type: 'food' },
+              { id: 'a4', time: '22:00', title: '追極光', note: '往主要公路開', type: 'highlight' }
+            ]
+          },
+          {
+            id: 2,
+            date: '2026-03-28',
+            dayOfWeek: '六',
+            location: 'North Pole',
+            accommodation: 'Minnie Street B&B',
+            transport: '租車',
+            weather: null,
+            activities: [
+              { id: 'a5', time: '10:00', title: '聖誕老人屋', note: '寄明信片', type: 'sightseeing' },
+              { id: 'a6', time: '13:00', title: '阿拉斯加大學博物館 (UAF)', note: '門票 $10', type: 'sightseeing' },
+              { id: 'a7', time: '15:00', title: '莫里斯湯普森文化中心', note: '領取極光證書', type: 'sightseeing' },
+              { id: 'a8', time: '20:00', title: 'Chena Hot Springs', note: '泡溫泉看極光', type: 'highlight' }
+            ]
+          }
+        ];
+
+        const INITIAL_EXPENSES = [
+          { id: 1, item: 'UAF 博物館門票', amount: 10, currency: 'USD', category: '票券', date: '2026-03-28' },
+          { id: 2, item: '租車費用 (3天)', amount: 298, currency: 'USD', category: '交通', date: '2026-03-27' },
+        ];
+
+        // --- 通用 Modal 元件 ---
+        const Modal = ({ isOpen, onClose, title, children }) => {
+          if (!isOpen) return null;
+          return (
+            <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center bg-black/50 backdrop-blur-sm animate-fade-in" onClick={(e) => { if(e.target === e.currentTarget) onClose(); }}>
+              <div className="bg-white w-full max-w-md rounded-t-2xl sm:rounded-2xl p-6 shadow-2xl animate-slide-up max-h-[85vh] overflow-y-auto transform transition-all">
+                <div className="flex justify-between items-center mb-5 border-b pb-3">
+                  <h3 className="text-xl font-bold text-gray-800">{title}</h3>
+                  <button onClick={onClose} className="p-2 rounded-full hover:bg-gray-100 transition"><X className="w-5 h-5 text-gray-500" /></button>
+                </div>
+                {children}
+              </div>
+            </div>
+          );
+        };
+
+        // --- 主應用 ---
+        function TravelPlanner() {
+          const [activeTab, setActiveTab] = useState('itinerary');
+          const bottomRef = useRef(null);
+          
+          // --- State: 資料 ---
+          const [itinerary, setItinerary] = useState(() => {
+            try { return JSON.parse(localStorage.getItem('aurora_itinerary')) || INITIAL_ITINERARY; } catch { return INITIAL_ITINERARY; }
+          });
+          const [expenses, setExpenses] = useState(() => {
+            try { return JSON.parse(localStorage.getItem('aurora_expenses')) || INITIAL_EXPENSES; } catch { return INITIAL_EXPENSES; }
+          });
+
+          // --- State: 編輯 ---
+          const [editingDay, setEditingDay] = useState(null); // 正在編輯哪一天的 ID
+          const [editingActivity, setEditingActivity] = useState(null); // { dayId, activity }
+          const [isAddingActivity, setIsAddingActivity] = useState(false);
+          const [showAddExpense, setShowAddExpense] = useState(false);
+          
+          // Form Data
+          const [dayForm, setDayForm] = useState({});
+          const [activityForm, setActivityForm] = useState({});
+          const [expenseForm, setExpenseForm] = useState({ item: '', amount: '', category: '餐飲', currency: 'USD' });
+
+          const [exchangeRate, setExchangeRate] = useState(32.5);
+
+          // --- Persistence ---
+          useEffect(() => { localStorage.setItem('aurora_itinerary', JSON.stringify(itinerary)); }, [itinerary]);
+          useEffect(() => { localStorage.setItem('aurora_expenses', JSON.stringify(expenses)); }, [expenses]);
+
+          // --- Weather Logic (Simulation) ---
+          const fetchWeather = () => {
+            setItinerary(prev => prev.map(day => {
+              const types = ['snow', 'clear', 'cloudy', 'snow', 'clear'];
+              const type = types[Math.floor(Math.random() * types.length)];
+              const temp = Math.floor(Math.random() * 15) - 20; // -20 to -5
+              return { ...day, weather: { type, temp } };
+            }));
+            alert("已更新當日天氣預報 (模擬數據)");
+          };
+
+          // --- Day Management Logic ---
+          const addDay = () => {
+            let newDateObj = new Date();
+            
+            if (itinerary.length > 0) {
+              const lastDay = itinerary[itinerary.length - 1];
+              // 處理日期字串 YYYY-MM-DD
+              const parts = lastDay.date.split(/[-/]/); // 支援 - 或 /
+              const y = parseInt(parts[0]);
+              const m = parseInt(parts[1]) - 1; // JS Month 0-11
+              const d = parseInt(parts[2]);
+              
+              newDateObj = new Date(y, m, d);
+              newDateObj.setDate(newDateObj.getDate() + 1);
+            }
+
+            const y = newDateObj.getFullYear();
+            const m = String(newDateObj.getMonth() + 1).padStart(2, '0');
+            const d = String(newDateObj.getDate()).padStart(2, '0');
+            const dateStr = `${y}-${m}-${d}`;
+            const dayOfWeekMap = ['日', '一', '二', '三', '四', '五', '六'];
+            const dayOfWeek = dayOfWeekMap[newDateObj.getDay()];
+
+            const newDay = {
+              id: Date.now(),
+              date: dateStr,
+              dayOfWeek: dayOfWeek,
+              location: '請輸入地點',
+              accommodation: '',
+              transport: '',
+              weather: null,
+              activities: []
+            };
+
+            setItinerary([...itinerary, newDay]);
+            // Scroll to bottom
+            setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 100);
+          };
+
+          const handleOpenDayEdit = (day) => {
+            setDayForm({ ...day });
+            setEditingDay(day.id);
+          };
+
+          const handleSaveDay = () => {
+            setItinerary(prev => prev.map(d => d.id === editingDay ? { ...d, ...dayForm } : d));
+            setEditingDay(null);
+          };
+
+          const handleDeleteDay = () => {
+            if (confirm(`確定要刪除 ${dayForm.date} 這整天的行程嗎？`)) {
+              setItinerary(prev => prev.filter(d => d.id !== editingDay));
+              setEditingDay(null);
+            }
+          };
+
+          // --- Activity Logic ---
+          const handleOpenActivityEdit = (dayId, activity = null) => {
+            if (activity) {
+              setActivityForm({ ...activity });
+              setIsAddingActivity(false);
+            } else {
+              setActivityForm({ id: Date.now().toString(), time: '09:00', title: '', note: '', type: 'sightseeing' });
+              setIsAddingActivity(true);
+            }
+            setEditingActivity({ dayId });
+          };
+
+          const handleSaveActivity = () => {
+            const { dayId } = editingActivity;
+            setItinerary(prev => prev.map(d => {
+              if (d.id !== dayId) return d;
+              
+              let newActivities;
+              if (isAddingActivity) {
+                newActivities = [...d.activities, activityForm];
+              } else {
+                newActivities = d.activities.map(a => a.id === activityForm.id ? activityForm : a);
+              }
+              // 自動排序
+              newActivities.sort((a, b) => a.time.localeCompare(b.time));
+              return { ...d, activities: newActivities };
+            }));
+            setEditingActivity(null);
+          };
+
+          const handleDeleteActivity = () => {
+            if (confirm('確定刪除此活動？')) {
+               const { dayId } = editingActivity;
+               setItinerary(prev => prev.map(d => {
+                 if (d.id !== dayId) return d;
+                 return { ...d, activities: d.activities.filter(a => a.id !== activityForm.id) };
+               }));
+               setEditingActivity(null);
+            }
+          };
+
+          // --- Expense Logic ---
+          const handleSaveExpense = () => {
+            if (!expenseForm.item || !expenseForm.amount) return;
+            setExpenses(prev => [...prev, { ...expenseForm, id: Date.now(), amount: parseFloat(expenseForm.amount), date: new Date().toISOString().split('T')[0] }]);
+            setExpenseForm({ item: '', amount: '', category: '餐飲', currency: 'USD' });
+            setShowAddExpense(false);
+          };
+
+          const handleDeleteExpense = (id) => {
+            if (confirm('刪除此筆費用？')) setExpenses(prev => prev.filter(e => e.id !== id));
+          };
+
+          // --- UI Helpers ---
+          const WeatherIcon = ({ type }) => {
+            switch(type) {
+              case 'snow': return <CloudSnow className="w-6 h-6 text-sky-300" />;
+              case 'clear': return <Sun className="w-6 h-6 text-amber-400" />;
+              case 'cloudy': return <CloudSun className="w-6 h-6 text-slate-400" />;
+              case 'rain': return <CloudRain className="w-6 h-6 text-blue-400" />;
+              default: return <div className="text-[10px] text-gray-300">N/A</div>;
+            }
+          };
+
+          const totalUSD = expenses.filter(e => e.currency === 'USD').reduce((acc, cur) => acc + cur.amount, 0);
+          const totalTWD = totalUSD * exchangeRate;
+
+          // --- RENDER ---
+          return (
+            <div className="max-w-md mx-auto bg-slate-50 h-full flex flex-col font-sans relative shadow-2xl overflow-hidden">
+              
+              {/* Top Navigation */}
+              <div className="bg-white px-5 py-4 shrink-0 border-b border-gray-100 flex flex-col justify-end pt-safe-top z-20 shadow-sm">
+                <div className="flex justify-between items-center">
+                  <div>
+                    <h1 className="text-xl font-black text-slate-800 tracking-tight">AURORA 2026</h1>
+                    <p className="text-xs text-slate-400 font-medium tracking-wide">ALASKA TRIP PLANNER</p>
+                  </div>
+                  {activeTab === 'itinerary' && (
+                    <button onClick={fetchWeather} className="bg-sky-50 text-sky-600 p-2 rounded-full hover:bg-sky-100 active:scale-90 transition">
+                      <CloudSun className="w-5 h-5" />
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Scrollable Area */}
+              <div className="flex-1 overflow-y-auto overscroll-contain no-scrollbar relative z-10 p-4 pb-28">
+                
+                {/* === TAB: ITINERARY === */}
+                {activeTab === 'itinerary' && (
+                  <div className="space-y-6">
+                    {itinerary.map((day) => (
+                      <div key={day.id} className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden transition-all">
+                        {/* Day Header */}
+                        <div className="bg-slate-50/80 p-4 border-b border-slate-100 flex justify-between items-start backdrop-blur-sm">
+                          <div className="flex-1">
+                            <div className="flex items-baseline gap-2 mb-1">
+                              <span className="font-bold text-xl text-slate-700 font-mono tracking-tight">{day.date}</span>
+                              <span className="text-xs font-bold bg-slate-200 text-slate-600 px-2 py-0.5 rounded-full">週{day.dayOfWeek}</span>
+                            </div>
+                            <div className="text-sm text-slate-500 flex items-center gap-1">
+                              <MapPin className="w-3.5 h-3.5 text-slate-400" /> {day.location}
+                            </div>
+                          </div>
+                          <div className="flex flex-col items-end gap-2">
+                            <div className="flex flex-col items-center justify-center bg-white w-14 h-12 rounded-xl border border-slate-100 shadow-sm">
+                               {day.weather ? <><WeatherIcon type={day.weather.type} /><span className="text-[10px] font-bold text-slate-600 mt-[-2px]">{day.weather.temp}°</span></> : <span className="text-[10px] text-gray-300">天氣</span>}
+                            </div>
+                            <button onClick={() => handleOpenDayEdit(day)} className="flex items-center gap-1 text-xs text-aurora-600 hover:text-aurora-700 font-medium px-2 py-1 rounded bg-aurora-50 hover:bg-aurora-100 transition">
+                              <Edit2 className="w-3 h-3" /> 編輯
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Info Banner */}
+                        <div className="px-4 py-3 bg-indigo-50/30 flex flex-wrap gap-3 text-xs text-slate-600 border-b border-slate-50">
+                           {day.accommodation ? (
+                             <div className="flex items-center gap-1.5 bg-white px-2 py-1 rounded border border-slate-100 shadow-sm">
+                               <Hotel className="w-3.5 h-3.5 text-indigo-500" /><span>{day.accommodation}</span>
+                             </div>
+                           ) : (
+                             <div className="flex items-center gap-1.5 text-slate-400 italic" onClick={() => handleOpenDayEdit(day)}><Hotel className="w-3.5 h-3.5" /> 暫無住宿</div>
+                           )}
+                           
+                           {day.transport && (
+                             <div className="flex items-center gap-1.5 bg-white px-2 py-1 rounded border border-slate-100 shadow-sm">
+                               <Car className="w-3.5 h-3.5 text-emerald-500" /><span>{day.transport}</span>
+                             </div>
+                           )}
+                        </div>
+
+                        {/* Timeline */}
+                        <div className="p-4 space-y-5 relative">
+                          <div className="absolute left-[27px] top-6 bottom-12 w-[2px] bg-slate-100"></div>
+                          
+                          {day.activities.map((act) => (
+                            <div key={act.id} onClick={() => handleOpenActivityEdit(day.id, act)} className="relative flex items-start gap-4 group cursor-pointer">
+                              {/* Time Bubble */}
+                              <div className="z-10 bg-white border-[3px] border-slate-100 text-slate-500 text-[11px] font-bold rounded-full w-14 h-7 flex items-center justify-center shrink-0 shadow-sm group-hover:border-aurora-500 group-hover:text-aurora-600 transition-colors">
+                                {act.time}
+                              </div>
+                              {/* Content Card */}
+                              <div className={`flex-1 p-3 rounded-xl border transition-all active:scale-[0.98] ${
+                                act.type === 'highlight' 
+                                  ? 'bg-gradient-to-br from-indigo-50 to-purple-50 border-indigo-100 shadow-sm' 
+                                  : 'bg-white border-slate-100 hover:border-aurora-200 hover:shadow-sm'
+                              }`}>
+                                <div className="flex justify-between items-start mb-1">
+                                  <span className="font-bold text-slate-700 text-sm leading-tight">{act.title}</span>
+                                  {act.type === 'highlight' && <span className="shrink-0 text-[10px] text-indigo-600 font-bold bg-white/80 px-1.5 py-0.5 rounded shadow-sm">★</span>}
+                                </div>
+                                {act.note && <div className="text-xs text-slate-500 leading-relaxed line-clamp-2">{act.note}</div>}
+                              </div>
+                            </div>
+                          ))}
+
+                          {/* Add Activity Button */}
+                          <button onClick={() => handleOpenActivityEdit(day.id)} className="relative flex items-center gap-4 w-full group py-1 opacity-60 hover:opacity-100 transition-opacity">
+                            <div className="z-10 bg-slate-50 text-slate-300 rounded-full w-14 h-7 flex items-center justify-center shrink-0 border border-slate-200 group-hover:border-aurora-400 group-hover:text-aurora-500 transition-colors">
+                              <Plus className="w-4 h-4" />
+                            </div>
+                            <div className="text-xs text-slate-400 font-medium group-hover:text-aurora-600">新增行程...</div>
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                    
+                    {/* Add Day Button */}
+                    <div ref={bottomRef} className="pt-2">
+                        <button onClick={addDay} className="w-full py-5 border-2 border-dashed border-slate-300 rounded-2xl flex flex-col items-center justify-center text-slate-400 hover:border-aurora-400 hover:text-aurora-600 hover:bg-aurora-50/50 transition-all active:scale-[0.98]">
+                          <Plus className="w-8 h-8 mb-2 opacity-50" />
+                          <span className="font-bold text-sm">新增一天 (Day {itinerary.length + 1})</span>
+                          <span className="text-[10px] opacity-70 mt-1">自動延續日期</span>
+                        </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* === TAB: BUDGET === */}
+                {activeTab === 'budget' && (
+                  <div className="space-y-6">
+                    {/* Summary Card */}
+                    <div className="bg-slate-800 rounded-3xl p-6 text-white shadow-xl relative overflow-hidden">
+                       <div className="absolute -top-10 -right-10 w-40 h-40 bg-aurora-500 opacity-20 rounded-full blur-3xl"></div>
+                       <div className="absolute bottom-0 left-0 w-32 h-32 bg-purple-500 opacity-20 rounded-full blur-2xl"></div>
+                       
+                       <h2 className="text-slate-300 text-xs font-bold tracking-wider mb-2 uppercase">Total Estimated Cost</h2>
+                       <div className="flex items-baseline gap-1 mb-4">
+                         <span className="text-lg font-medium text-slate-300">$</span>
+                         <span className="text-5xl font-black tracking-tighter">{totalUSD.toLocaleString()}</span>
+                         <span className="text-sm font-bold text-slate-400 ml-2">USD</span>
+                       </div>
+                       
+                       <div className="flex items-center gap-2 bg-white/10 p-3 rounded-xl backdrop-blur-md">
+                         <Calculator className="w-4 h-4 text-aurora-300" />
+                         <span className="text-sm font-medium text-slate-200">≈ TWD {totalTWD.toLocaleString()}</span>
+                         <span className="text-[10px] text-slate-400 ml-auto">匯率 {exchangeRate}</span>
+                       </div>
+                    </div>
+
+                    {/* Controls */}
+                    <div className="flex justify-between items-center px-1">
+                      <h3 className="font-bold text-slate-700 text-lg">支出明細</h3>
+                      <button onClick={() => setShowAddExpense(true)} className="bg-aurora-600 text-white px-4 py-2 rounded-full text-sm font-bold shadow-lg shadow-aurora-200 hover:bg-aurora-700 active:scale-95 transition flex items-center gap-1">
+                        <Plus className="w-4 h-4" /> 記一筆
+                      </button>
+                    </div>
+
+                    {/* List */}
+                    <div className="space-y-3">
+                      {expenses.map((expense) => (
+                        <div key={expense.id} className="flex justify-between items-center bg-white p-4 rounded-xl border border-slate-100 shadow-sm">
+                          <div className="flex items-center gap-4">
+                            <div className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 text-lg ${
+                                expense.category === '住宿' ? 'bg-indigo-50 text-indigo-500' : 
+                                expense.category === '交通' ? 'bg-emerald-50 text-emerald-500' : 
+                                expense.category === '餐飲' ? 'bg-orange-50 text-orange-500' :
+                                'bg-slate-100 text-slate-500'
+                            }`}>
+                                {expense.category === '住宿' ? <Hotel className="w-5 h-5" /> : 
+                                 expense.category === '交通' ? <Car className="w-5 h-5" /> : 
+                                 <DollarSign className="w-5 h-5" />}
+                            </div>
+                            <div>
+                              <div className="font-bold text-slate-800 text-sm">{expense.item}</div>
+                              <div className="text-xs text-slate-400 mt-0.5">{expense.date} · {expense.category}</div>
+                            </div>
+                          </div>
+                          <div className="flex flex-col items-end gap-1">
+                             <div className="font-black text-slate-700">{expense.currency} {expense.amount}</div>
+                             <button onClick={() => handleDeleteExpense(expense.id)} className="text-xs text-slate-300 hover:text-red-500 flex items-center gap-1 p-1">
+                               <Trash2 className="w-3 h-3" /> 移除
+                             </button>
+                          </div>
+                        </div>
+                      ))}
+                      {expenses.length === 0 && <div className="text-center py-10 text-slate-400 text-sm">尚無支出紀錄</div>}
+                    </div>
+                  </div>
+                )}
+
+              </div>
+
+              {/* Bottom Navigation */}
+              <div className="shrink-0 bg-white border-t border-slate-100 px-8 py-3 pb-safe-bottom flex justify-around items-center z-30 shadow-[0_-5px_20px_rgba(0,0,0,0.03)]">
+                <button onClick={() => setActiveTab('itinerary')} className={`flex flex-col items-center gap-1 transition-all duration-300 ${activeTab === 'itinerary' ? 'text-aurora-600 scale-110' : 'text-slate-300 hover:text-slate-500'}`}>
+                  <Navigation className="w-6 h-6" strokeWidth={activeTab === 'itinerary' ? 2.5 : 2} />
+                  <span className="text-[10px] font-bold">行程</span>
+                </button>
+                <div className="w-px h-8 bg-slate-100"></div>
+                <button onClick={() => setActiveTab('budget')} className={`flex flex-col items-center gap-1 transition-all duration-300 ${activeTab === 'budget' ? 'text-aurora-600 scale-110' : 'text-slate-300 hover:text-slate-500'}`}>
+                  <DollarSign className="w-6 h-6" strokeWidth={activeTab === 'budget' ? 2.5 : 2} />
+                  <span className="text-[10px] font-bold">預算</span>
+                </button>
+              </div>
+
+              {/* === MODALS === */}
+              
+              {/* Day Edit Modal */}
+              <Modal isOpen={!!editingDay} onClose={() => setEditingDay(null)} title="編輯當日資訊">
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-bold text-slate-400 mb-1 uppercase tracking-wider">日期</label>
+                    <input type="text" className="w-full border border-slate-200 rounded-xl p-3 bg-slate-50 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-aurora-500" value={dayForm.date || ''} onChange={e => setDayForm({...dayForm, date: e.target.value})} />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-400 mb-1 uppercase tracking-wider">地點</label>
+                    <input type="text" className="w-full border border-slate-200 rounded-xl p-3 bg-slate-50 text-sm focus:outline-none focus:ring-2 focus:ring-aurora-500" value={dayForm.location || ''} onChange={e => setDayForm({...dayForm, location: e.target.value})} />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-400 mb-1 uppercase tracking-wider">住宿</label>
+                    <input type="text" className="w-full border border-slate-200 rounded-xl p-3 bg-slate-50 text-sm focus:outline-none focus:ring-2 focus:ring-aurora-500" value={dayForm.accommodation || ''} onChange={e => setDayForm({...dayForm, accommodation: e.target.value})} placeholder="例如: Minnie Street B&B" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-400 mb-1 uppercase tracking-wider">交通</label>
+                    <input type="text" className="w-full border border-slate-200 rounded-xl p-3 bg-slate-50 text-sm focus:outline-none focus:ring-2 focus:ring-aurora-500" value={dayForm.transport || ''} onChange={e => setDayForm({...dayForm, transport: e.target.value})} placeholder="例如: 租車" />
+                  </div>
+                  
+                  <div className="pt-4 flex gap-3">
+                    <button onClick={handleDeleteDay} className="flex-1 bg-red-50 text-red-500 py-3 rounded-xl font-bold text-sm hover:bg-red-100 active:scale-95 transition">刪除整天</button>
+                    <button onClick={handleSaveDay} className="flex-[2] bg-aurora-600 text-white py-3 rounded-xl font-bold text-sm shadow-lg shadow-aurora-200 hover:bg-aurora-700 active:scale-95 transition">儲存變更</button>
+                  </div>
+                </div>
+              </Modal>
+
+              {/* Activity Edit Modal */}
+              <Modal isOpen={!!editingActivity} onClose={() => setEditingActivity(null)} title={isAddingActivity ? "新增行程" : "編輯行程"}>
+                <div className="space-y-4">
+                  <div className="grid grid-cols-3 gap-3">
+                     <div className="col-span-1">
+                        <label className="block text-xs font-bold text-slate-400 mb-1 uppercase tracking-wider">時間</label>
+                        <input type="time" className="w-full border border-slate-200 rounded-xl p-3 bg-slate-50 text-center font-mono text-sm focus:outline-none focus:ring-2 focus:ring-aurora-500" value={activityForm.time || ''} onChange={e => setActivityForm({...activityForm, time: e.target.value})} />
+                     </div>
+                     <div className="col-span-2">
+                        <label className="block text-xs font-bold text-slate-400 mb-1 uppercase tracking-wider">類型</label>
+                        <div className="relative">
+                          <select className="w-full border border-slate-200 rounded-xl p-3 bg-slate-50 text-sm appearance-none focus:outline-none focus:ring-2 focus:ring-aurora-500" value={activityForm.type || 'sightseeing'} onChange={e => setActivityForm({...activityForm, type: e.target.value})}>
+                            <option value="sightseeing">📸 觀光 (Sightseeing)</option>
+                            <option value="food">🍽️ 餐飲 (Food)</option>
+                            <option value="transport">🚗 交通 (Transport)</option>
+                            <option value="highlight">✨ 重點 (Highlight)</option>
+                            <option value="activity">🏂 活動 (Activity)</option>
+                          </select>
+                          <ChevronRight className="absolute right-3 top-3.5 w-4 h-4 text-gray-400 rotate-90 pointer-events-none" />
+                        </div>
+                     </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-400 mb-1 uppercase tracking-wider">標題</label>
+                    <input type="text" className="w-full border border-slate-200 rounded-xl p-3 bg-slate-50 text-sm font-bold text-slate-700 focus:outline-none focus:ring-2 focus:ring-aurora-500" placeholder="要做什麼?" value={activityForm.title || ''} onChange={e => setActivityForm({...activityForm, title: e.target.value})} />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-slate-400 mb-1 uppercase tracking-wider">備註</label>
+                    <textarea rows="3" className="w-full border border-slate-200 rounded-xl p-3 bg-slate-50 text-sm focus:outline-none focus:ring-2 focus:ring-aurora-500" placeholder="詳細資訊、門票價格..." value={activityForm.note || ''} onChange={e => setActivityForm({...activityForm, note: e.target.value})}></textarea>
+                  </div>
+                  
+                  <div className="pt-4 flex gap-3">
+                    {!isAddingActivity && (
+                      <button onClick={handleDeleteActivity} className="flex-1 bg-slate-100 text-slate-400 py-3 rounded-xl font-bold text-sm hover:bg-slate-200 hover:text-red-500 active:scale-95 transition">刪除</button>
+                    )}
+                    <button onClick={handleSaveActivity} className="flex-[2] bg-aurora-600 text-white py-3 rounded-xl font-bold text-sm shadow-lg shadow-aurora-200 hover:bg-aurora-700 active:scale-95 transition">
+                      {isAddingActivity ? '確認新增' : '儲存變更'}
+                    </button>
+                  </div>
+                </div>
+              </Modal>
+
+              {/* Expense Add Modal */}
+              <Modal isOpen={showAddExpense} onClose={() => setShowAddExpense(false)} title="記一筆費用">
+                <div className="space-y-5">
+                  <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 flex items-center gap-2">
+                     <span className="text-2xl font-bold text-slate-400">$</span>
+                     <input type="number" className="bg-transparent text-3xl font-black text-slate-800 w-full focus:outline-none placeholder-slate-200" placeholder="0" value={expenseForm.amount} onChange={e => setExpenseForm({...expenseForm, amount: e.target.value})} autoFocus />
+                     <select className="bg-white border text-xs font-bold py-1 px-2 rounded uppercase tracking-wider" value={expenseForm.currency} onChange={e => setExpenseForm({...expenseForm, currency: e.target.value})}>
+                        <option value="USD">USD</option>
+                        <option value="TWD">TWD</option>
+                     </select>
+                  </div>
+
+                  <div>
+                    <label className="block text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">項目名稱</label>
+                    <input type="text" className="w-full border border-slate-200 rounded-xl p-3 bg-white text-sm focus:outline-none focus:ring-2 focus:ring-aurora-500" placeholder="例如: 晚餐" value={expenseForm.item} onChange={e => setExpenseForm({...expenseForm, item: e.target.value})} />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider">分類</label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {['餐飲', '住宿', '交通', '票券', '購物', '其他'].map(cat => (
+                        <button 
+                          key={cat}
+                          onClick={() => setExpenseForm({...expenseForm, category: cat})}
+                          className={`py-2 rounded-lg text-sm font-bold transition border ${expenseForm.category === cat ? 'bg-slate-800 text-white border-slate-800 shadow-md' : 'bg-white text-slate-500 border-slate-200 hover:bg-slate-50'}`}
+                        >
+                          {cat}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <button onClick={handleSaveExpense} className="w-full bg-aurora-600 text-white py-4 rounded-2xl font-bold text-lg mt-2 shadow-xl shadow-aurora-200 hover:bg-aurora-700 active:scale-95 transition">確認新增</button>
+                </div>
+              </Modal>
+
+            </div>
+          );
+        }
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<TravelPlanner />);
+    </script>
+</body>
+</html>
